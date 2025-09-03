@@ -36,10 +36,10 @@ import net.xeoh.plugins.base.annotations.PluginImplementation;
 
 @PluginImplementation
 @Log4j2
-public class KickStartStepPlugin implements IStepPluginVersion2 {
+public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
     
     @Getter
-    private String title = "intranda_step_kick_start";
+    private String title = "intranda_step_mycore_ingest";
     @Getter
     private Step step;
     @Getter
@@ -57,7 +57,7 @@ public class KickStartStepPlugin implements IStepPluginVersion2 {
         SubnodeConfiguration myconfig = ConfigPlugins.getProjectAndStepConfig(title, step);
         value = myconfig.getString("value", "default value"); 
         allowTaskFinishButtons = myconfig.getBoolean("allowTaskFinishButtons", false);
-        log.info("KickStart step plugin initialized");
+        log.info("MycoreIngest step plugin initialized");
     }
 
     @Override
@@ -70,7 +70,7 @@ public class KickStartStepPlugin implements IStepPluginVersion2 {
 
     @Override
     public String getPagePath() {
-        return "/uii/plugin_step_kick_start.xhtml";
+        return "/uii/plugin_step_mycore_ingest.xhtml";
     }
 
     @Override
@@ -109,7 +109,7 @@ public class KickStartStepPlugin implements IStepPluginVersion2 {
         boolean successful = true;
         // your logic goes here
         
-        log.info("KickStart step plugin executed");
+        log.info("MycoreIngest step plugin executed");
         if (!successful) {
             return PluginReturnValue.ERROR;
         }
