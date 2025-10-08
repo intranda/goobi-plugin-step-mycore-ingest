@@ -6,7 +6,9 @@
 			<arg value="package"/>
 		</exec>
 		<copy file="module-base/target/plugin-step-mycore-ingest-base.jar" todir="/opt/digiverso/goobi/plugins/step/" overwrite="true"/>
-		<copy file="module-gui/target/plugin-step-mycore-ingest-gui.jar" todir="/opt/digiverso/goobi/plugins/GUI/" overwrite="true"/>
+		<!--
+		<copy file="install/plugin_intranda_step_mycore_ingest.xml" todir="/opt/digiverso/goobi/config/" overwrite="true"/>
+		-->		
 	</target>
 
 </project>

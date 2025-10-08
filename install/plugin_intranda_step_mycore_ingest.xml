@@ -8,14 +8,23 @@
 	-->
     
     <config>
+    
         <!-- which projects to use for (can be more then one, otherwise use *) -->
         <project>*</project>
         <step>*</step>
         
-        <!-- sample parameter -->
-        <value>test</value>
-        <!-- display button to finish the task directly from within the entered plugin -->
-        <allowTaskFinishButtons>true</allowTaskFinishButtons>
+        <!-- URL to use for the Transformation of METS into the MyCoRe object xml -->
+        <!-- 
+        <xslt-url>https://zs-test.thulb.uni-jena.de/xsl/goobimets.xsl</xslt-url>
+        -->
+        <xslt-url>http://localhost/goobimets.xsl</xslt-url>
+        
+        
+        <!-- Parameters for the MyCoRe REST API -->
+        <mycore-api>https://mycore.de/api/v2/</mycore-api>
+        <mycore-login>login</mycore-login>
+        <mycore-password>password</mycore-password>
+        
     </config>
 
 </config_plugin>
