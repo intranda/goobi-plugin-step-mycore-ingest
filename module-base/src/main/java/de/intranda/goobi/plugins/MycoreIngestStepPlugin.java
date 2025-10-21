@@ -2,10 +2,15 @@ package de.intranda.goobi.plugins;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.StringWriter;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
+import kong.unirest.core.Config;
+import kong.unirest.core.Unirest;
 
 /**
  * This file is part of a plugin for Goobi - a Workflow tool for the support of mass digitization.
@@ -27,6 +32,7 @@ import java.nio.file.Paths;
  */
 
 import java.util.HashMap;
+import java.util.List;
 
 import javax.xml.transform.Source;
 import javax.xml.transform.Transformer;
@@ -47,6 +53,8 @@ import org.goobi.production.plugin.interfaces.IStepPluginVersion2;
 import de.sub.goobi.config.ConfigPlugins;
 import de.sub.goobi.config.ConfigurationHelper;
 import de.sub.goobi.export.download.ExportMets;
+import de.sub.goobi.helper.NIOFileUtils;
+import de.sub.goobi.helper.StorageProvider;
 import de.sub.goobi.helper.exceptions.DAOException;
 import de.sub.goobi.helper.exceptions.ExportFileException;
 import de.sub.goobi.helper.exceptions.SwapException;
@@ -137,13 +145,8 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	@Override
 	public PluginReturnValue run() {
 		
-		System.out.println("xslt:     " + xslt);
-		System.out.println("api:      " + mycoreApi);
-		System.out.println("login:    " + mycoreLogin);
-		System.out.println("password: " + mycorePassword);
-		Path metsfile;
-		
 		// export the mets file
+		Path metsfile;
 		try {
 			metsfile = exportMetsFile();
 		} catch (PreferencesException | WriteException | DocStructHasNoTypeException | MetadataTypeNotAllowedException
@@ -163,14 +166,36 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		}
 		
 		// create volume in mycore
-		String location = null;
+		String volumeLocation = null;
 		try {
-			location = createVolumeInMyCore(xmlResult);
-			System.out.println(location + " was given back by MyCore");
+			volumeLocation = createVolume(xmlResult);
+			log.info("MyCoRe passed back this URL for the volume:" + volumeLocation);
 		} catch (IOException e) {
 			log.error("Error while creating the volume", e);
 			return PluginReturnValue.ERROR;
 		}
+		System.out.println("volume: " + volumeLocation);
+		
+		
+		// create derivative in mycore
+		String derivativeLocation = null;
+		try {
+			derivativeLocation = createDerivativeForVolume(volumeLocation, xmlResult);
+			log.info("MyCoRe passed back this URL for the derivative:" + derivativeLocation);
+		} catch (IOException e) {
+			log.error("Error while creating the derivative", e);
+			return PluginReturnValue.ERROR;
+		}
+		System.out.println("derivative: " + derivativeLocation);
+		
+		try {
+			uploadImageFilesToDerivative(derivativeLocation);
+			log.info("MyCoRe passed back this URL for the derivative:" + derivativeLocation);
+		} catch (IOException | SwapException e) {
+			log.error("Error while uploading images to the derivative", e);
+			return PluginReturnValue.ERROR;
+		}
+		
 		
 		log.info("MycoreIngest step plugin executed");
 		return PluginReturnValue.FINISH;
@@ -228,6 +253,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
             }
     	}
     	
+    	// if property exists to transformation
     	if (mycoreId!=null) {
     		
         	Source xmlSource = new StreamSource(metsfile.toFile());  
@@ -248,13 +274,17 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
     		throw new IOException("No MyCoRe identifier could be found as property with name 'MyCore-ID'");
     	}
 	}
-        
-      
-
 	
-	private String createVolumeInMyCore(String sourceXml) throws IOException {
+	/**
+	 * create a volume inside of MyCoRe
+	 * @param sourceXml
+	 * @return
+	 * @throws IOException
+	 */
+	private String createVolume(String sourceXml) throws IOException {
 		HttpResponse<String> response = Unirest.post(mycoreApi + "objects")
 		  .header("Content-Type", "application/xml")
+		  .header("Accept", "application/xml")
 		  .basicAuth(mycoreLogin, mycorePassword)
 		  .body(sourceXml)
 		  .asString();
@@ -264,10 +294,71 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		    if (location != null) {
 		    	return location;
 		    } else {
-		    	throw new IOException("No location could be found of created volume in MyCoRe.");
+		    	throw new IOException("No location could be found for created volume in MyCoRe.");
 		    }
 		} else {
 			throw new IOException("Response of MyCoRe for creation of volume was not successful: " + response.getStatus() + " - " + response.getBody());
 		}
 	}
+	
+	/**
+	 * create derivative for a volume inside of MyCoRe
+	 * @param inLocation
+	 * @param sourceXml
+	 * @return
+	 * @throws IOException
+	 */
+	private String createDerivativeForVolume(String inLocation, String sourceXml) throws IOException {
+		HttpResponse<String> response = Unirest.post(inLocation + "/derivates")
+		  .header("Content-Type", "application/xml")
+		  .header("Accept", "application/xml")
+		  .basicAuth(mycoreLogin, mycorePassword)
+		  .body(sourceXml)
+		  .asString();
+
+		if (response.isSuccess()) {
+		    String location = response.getHeaders().getFirst("location");
+		    if (location != null) {
+		    	return location;
+		    } else {
+		    	throw new IOException("No location could be found for created derivative in MyCoRe.");
+		    }
+		} else {
+			throw new IOException("Response of MyCoRe for creation of derivative was not successful: " + response.getStatus() + " - " + response.getBody());
+		}
+	}
+	
+	/**
+	 * upload files to derivative in MyCoRe
+	 * @param sourceXml
+	 * @return
+	 * @throws IOException
+	 * @throws SwapException 
+	 */
+	private void uploadImageFilesToDerivative(String inLocation) throws IOException, SwapException {
+		String mediaFolder = step.getProzess().getImagesTifDirectory(false);
+		List<Path> imageList = StorageProvider.getInstance().listFiles(mediaFolder);
+		
+		for (Path p : imageList) {
+			HttpResponse<InputStream> response = Unirest.put(inLocation + "/contents/" + p.getFileName())
+		            .header("Content-Type", "image/jpg")
+		            .header("Accept", "application/xml")
+		            .basicAuth(mycoreLogin, mycorePassword)
+		            .body(p.toFile())
+		            .asObject(InputStream.class);  // Response als InputStream
+
+		    if (response.getStatus() < 200 || response.getStatus() >= 300) {
+		        throw new IOException("Response of MyCoRe for creation of derivative was not successful: " 
+		            + response.getStatus());
+		    }
+
+		    // InputStream in String lesen, falls du XML als String brauchst
+		    try (InputStream is = response.getBody()) {
+		        String xml = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+		        System.out.println(xml);
+		    }
+		}
+	}
+	
+	
 }
