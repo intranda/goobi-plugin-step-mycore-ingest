@@ -3,6 +3,10 @@ title: ZZZ
 identifier: intranda_step_ZZZ
 description: Step Plugin for ZZZ
 published: false
+keywords:
+    - Goobi workflow
+    - Plugin
+    - Step Plugin
 ---
 
 ## Introduction
