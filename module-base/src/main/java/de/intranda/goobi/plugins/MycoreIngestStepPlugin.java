@@ -167,7 +167,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			xmlResult = xslTranform(metsfile);
 		} catch (IOException | TransformerException e) {
 			log.error("Error while doing the XSLT processing for the METS file", e);
-			writeReceipt(false, "Error while doing the XSLT processing for the METS file: " + e.getMessage());
+			writeErrorToJournal("Error while doing the XSLT processing for the METS file: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
 		
@@ -179,7 +179,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			receipt.setVolume(volumeLocation);
 		} catch (IOException e) {
 			log.error("Error while creating the volume", e);
-			writeReceipt(false, "Error while creating the volume: " + e.getMessage());
+			writeErrorToJournal("Error while creating the volume: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
 		
@@ -191,7 +191,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			receipt.setDerivative(derivativeLocation);
 		} catch (IOException e) {
 			log.error("Error while creating the derivative", e);
-			writeReceipt(false, "Error while creating the derivative: " + e.getMessage());
+			writeErrorToJournal("Error while creating the derivative: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
 		
@@ -230,7 +230,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			log.info("Images were uploaded to MyCoRe derivative");
 		} catch (IOException | SwapException e) {
 			log.error("Error while uploading images to the derivative", e);
-			writeReceipt(false, "Error while uploading images to the derivative: " + e.getMessage());
+			writeErrorToJournal("Error while uploading images to the derivative: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
 		
@@ -273,7 +273,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	        Path file = Path.of(folder.toString(), filename);
 	        om.writeValue(file.toFile(), receipt);
         
-            JournalEntry entry = new JournalEntry(step.getProzess().getId(), new Date(), Helper.getCurrentUser().getNachVorname(),
+            JournalEntry entry = new JournalEntry(step.getProzess().getId(), new Date(), "- automatic -",
                     LogType.FILE, "Receipt for the ingest into MyCoRe created", EntryType.PROCESS);
             entry.setFilename(file.toString());
             JournalManager.saveJournalEntry(entry);
@@ -284,6 +284,16 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 
 	}
 
+	/**
+	 * simple helper to write error message into journal
+	 * @param message
+	 */
+	private void writeErrorToJournal(String message) {
+		JournalEntry entry = new JournalEntry(step.getProzess().getId(), new Date(), "- automatic -",
+                LogType.ERROR, message, EntryType.PROCESS);
+        JournalManager.saveJournalEntry(entry);
+	}
+	
 	/**
 	 * do a regular export of a METS file into temp folder
 	 * 
