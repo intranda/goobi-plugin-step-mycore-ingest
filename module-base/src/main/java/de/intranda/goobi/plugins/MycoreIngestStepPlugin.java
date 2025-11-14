@@ -1,36 +1,17 @@
 package de.intranda.goobi.plugins;
 
-import java.io.File;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringWriter;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-
-import kong.unirest.core.Config;
-import kong.unirest.core.Unirest;
-
-/**
- * This file is part of a plugin for Goobi - a Workflow tool for the support of mass digitization.
- *
- * Visit the websites for more information.
- *          - https://goobi.io
- *          - https://www.intranda.com
- *          - https://github.com/intranda/goobi
- *
- * This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 59
- * Temple Place, Suite 330, Boston, MA 02111-1307 USA
- *
- */
-
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 
@@ -43,23 +24,41 @@ import javax.xml.transform.stream.StreamSource;
 
 import org.apache.commons.configuration.SubnodeConfiguration;
 import org.goobi.beans.GoobiProperty;
+import org.goobi.beans.JournalEntry;
+import org.goobi.beans.JournalEntry.EntryType;
 import org.goobi.beans.Step;
+import org.goobi.production.enums.LogType;
 import org.goobi.production.enums.PluginGuiType;
 import org.goobi.production.enums.PluginReturnValue;
 import org.goobi.production.enums.PluginType;
 import org.goobi.production.enums.StepReturnValue;
 import org.goobi.production.plugin.interfaces.IStepPluginVersion2;
 
+import com.fasterxml.jackson.annotation.JsonInclude.Include;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonMappingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import com.fasterxml.jackson.dataformat.xml.ser.ToXmlGenerator;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.datatype.jsr310.deser.LocalDateTimeDeserializer;
+import com.fasterxml.jackson.datatype.jsr310.ser.LocalDateTimeSerializer;
+
+import de.intranda.goobi.plugins.model.IngestFile;
+import de.intranda.goobi.plugins.model.IngestReceipt;
+import de.intranda.goobi.plugins.model.MycoreDirectory;
+import de.intranda.goobi.plugins.model.MycoreFile;
 import de.sub.goobi.config.ConfigPlugins;
 import de.sub.goobi.config.ConfigurationHelper;
 import de.sub.goobi.export.download.ExportMets;
-import de.sub.goobi.helper.NIOFileUtils;
+import de.sub.goobi.helper.Helper;
 import de.sub.goobi.helper.StorageProvider;
 import de.sub.goobi.helper.exceptions.DAOException;
 import de.sub.goobi.helper.exceptions.ExportFileException;
 import de.sub.goobi.helper.exceptions.SwapException;
 import de.sub.goobi.helper.exceptions.UghHelperException;
-import de.sub.goobi.persistence.managers.PropertyManager;
+import de.sub.goobi.persistence.managers.JournalManager;
 import kong.unirest.core.HttpResponse;
 import kong.unirest.core.Unirest;
 import lombok.Getter;
@@ -70,7 +69,7 @@ import ugh.exceptions.MetadataTypeNotAllowedException;
 import ugh.exceptions.PreferencesException;
 import ugh.exceptions.ReadException;
 import ugh.exceptions.TypeNotAllowedForParentException;
-import ugh.exceptions.WriteException; 
+import ugh.exceptions.WriteException;
 
 @PluginImplementation
 @Log4j2
@@ -86,7 +85,9 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	private String mycoreApi;
 	private String mycoreLogin;
 	private String mycorePassword;
-
+	private IngestReceipt receipt;
+	private List<IngestFile> derivatives;
+	private List<IngestFile> altos;
 	@Override
 	public void initialize(Step step, String returnPath) {
 		this.returnPath = returnPath;
@@ -144,6 +145,10 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 
 	@Override
 	public PluginReturnValue run() {
+		derivatives = new ArrayList<>();
+		altos = new ArrayList<>();
+		receipt = new IngestReceipt();
+		receipt.setStatus("STARTED");
 		
 		// export the mets file
 		Path metsfile;
@@ -162,6 +167,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			xmlResult = xslTranform(metsfile);
 		} catch (IOException | TransformerException e) {
 			log.error("Error while doing the XSLT processing for the METS file", e);
+			writeErrorToJournal("Error while doing the XSLT processing for the METS file: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
 		
@@ -169,39 +175,125 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		String volumeLocation = null;
 		try {
 			volumeLocation = createVolume(xmlResult);
-			log.info("MyCoRe passed back this URL for the volume:" + volumeLocation);
+			log.info("MyCoRe passed back this URL for the volume: " + volumeLocation);
+			receipt.setVolume(volumeLocation);
 		} catch (IOException e) {
 			log.error("Error while creating the volume", e);
+			writeErrorToJournal("Error while creating the volume: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
-		System.out.println("volume: " + volumeLocation);
-		
 		
 		// create derivative in mycore
 		String derivativeLocation = null;
 		try {
 			derivativeLocation = createDerivativeForVolume(volumeLocation, xmlResult);
-			log.info("MyCoRe passed back this URL for the derivative:" + derivativeLocation);
+			log.info("MyCoRe passed back this URL for the derivative: " + derivativeLocation);
+			receipt.setDerivative(derivativeLocation);
 		} catch (IOException e) {
 			log.error("Error while creating the derivative", e);
+			writeErrorToJournal("Error while creating the derivative: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
-		System.out.println("derivative: " + derivativeLocation);
 		
 		try {
+			// upload image derivatives
 			uploadImageFilesToDerivative(derivativeLocation);
-			log.info("MyCoRe passed back this URL for the derivative:" + derivativeLocation);
+			
+			for (IngestFile i : derivatives) {
+				System.out.println(i.getName());
+			}
+			System.out.println("-------------------------");
+			
+			// upload ALTO files
+			uploadAltoFilesToDerivative(derivativeLocation);
+
+			for (IngestFile i : altos) {
+				System.out.println(i.getName());
+			}
+			System.out.println("-------------------------");
+			
+			// upload regular METS file
+			uploadFileToDerivative(derivativeLocation, metsfile, "application/xml", "", "goobi_mets.xml");
+			
+			// upload METS anchor file
+			String anchor = metsfile.toString().replace("_mets.xml", "_mets_anchor.xml");
+			uploadFileToDerivative(derivativeLocation, Paths.get(anchor), "application/xml", "", "goobi_mets_anchor.xml");
+			
+			// validate content for images and mets file
+			validateIngestedContent(derivativeLocation + "/contents/", derivatives);
+			validateIngestedContent(derivativeLocation + "/contents/ocr/alto/", altos);
+			
+			// add files into receipt
+			receipt.getFiles().addAll(derivatives);
+			receipt.getFiles().addAll(altos);
+			
+			log.info("Images were uploaded to MyCoRe derivative");
 		} catch (IOException | SwapException e) {
 			log.error("Error while uploading images to the derivative", e);
+			writeErrorToJournal("Error while uploading images to the derivative: " + e.getMessage());
 			return PluginReturnValue.ERROR;
 		}
 		
 		
 		log.info("MycoreIngest step plugin executed");
+		writeReceipt(true, "Ingest finished successfull");
 		return PluginReturnValue.FINISH;
 	}
 
+	/**
+	 * Finish the receipt and write it into the filesystem
+	 * 
+	 * @param status
+	 * @param details
+	 */
+	private void writeReceipt(boolean status, String details) {
+		receipt.setStatus(status?"FINISHED":"ERROR");
+		receipt.setDetails(details);
+		receipt.setEnd(LocalDateTime.now());
+		
+		// write object as xml file
+   		DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmssSSS");
+		JavaTimeModule jsr310 = new JavaTimeModule();
+		jsr310.addSerializer(LocalDateTime.class, new LocalDateTimeSerializer(formatter));
+		jsr310.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(formatter));
+		ObjectMapper om = new XmlMapper()
+				.registerModule(jsr310)
+				.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+		om.setSerializationInclusion(Include.NON_EMPTY);
+        om.enable(SerializationFeature.INDENT_OUTPUT);
 
+        
+        try {
+	        Path folder = Paths.get(step.getProzess().getProcessDataDirectory(),
+	                    ConfigurationHelper.getInstance().getFolderForInternalJournalFiles());
+	        if (!StorageProvider.getInstance().isFileExists(folder)) {
+	            StorageProvider.getInstance().createDirectories(folder);
+	        }
+	        String filename = "ingest-receipt-" + receipt.getEnd().format(formatter) + ".xml";
+	        Path file = Path.of(folder.toString(), filename);
+	        om.writeValue(file.toFile(), receipt);
+        
+            JournalEntry entry = new JournalEntry(step.getProzess().getId(), new Date(), "- automatic -",
+                    LogType.FILE, "Receipt for the ingest into MyCoRe created", EntryType.PROCESS);
+            entry.setFilename(file.toString());
+            JournalManager.saveJournalEntry(entry);
+
+		} catch (IOException | SwapException e) {
+			log.error("Error writing the receipt to the filesystem", e);
+		}
+
+	}
+
+	/**
+	 * simple helper to write error message into journal
+	 * @param message
+	 */
+	private void writeErrorToJournal(String message) {
+		JournalEntry entry = new JournalEntry(step.getProzess().getId(), new Date(), "- automatic -",
+                LogType.ERROR, message, EntryType.PROCESS);
+        JournalManager.saveJournalEntry(entry);
+	}
+	
 	/**
 	 * do a regular export of a METS file into temp folder
 	 * 
@@ -328,37 +420,135 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		}
 	}
 	
+
 	/**
-	 * upload files to derivative in MyCoRe
-	 * @param sourceXml
-	 * @return
+	 * upload images to derivative in MyCoRe
+	 * 
+	 * @param inLocation
 	 * @throws IOException
-	 * @throws SwapException 
+	 * @throws SwapException
 	 */
 	private void uploadImageFilesToDerivative(String inLocation) throws IOException, SwapException {
-		String mediaFolder = step.getProzess().getImagesTifDirectory(false);
-		List<Path> imageList = StorageProvider.getInstance().listFiles(mediaFolder);
-		
-		for (Path p : imageList) {
-			HttpResponse<InputStream> response = Unirest.put(inLocation + "/contents/" + p.getFileName())
-		            .header("Content-Type", "image/jpg")
-		            .header("Accept", "application/xml")
-		            .basicAuth(mycoreLogin, mycorePassword)
-		            .body(p.toFile())
-		            .asObject(InputStream.class);  // Response als InputStream
-
-		    if (response.getStatus() < 200 || response.getStatus() >= 300) {
-		        throw new IOException("Response of MyCoRe for creation of derivative was not successful: " 
-		            + response.getStatus());
-		    }
-
-		    // InputStream in String lesen, falls du XML als String brauchst
-		    try (InputStream is = response.getBody()) {
-		        String xml = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-		        System.out.println(xml);
-		    }
+		String folder = step.getProzess().getImagesTifDirectory(false);
+		List<Path> list = StorageProvider.getInstance().listFiles(folder);
+		for (Path p : list) {
+			IngestFile f = new IngestFile();
+			f.setGoobiFilePath(p.toString());
+			f.setName(p.getFileName().toString());
+			f.setGoobiFileType("media");
+			f.setGoobiSize(Files.size(p));
+			derivatives.add(f);
+			uploadFileToDerivative(inLocation, p, "image/tif", "", p.getFileName().toString());
 		}
 	}
+	
+	/**
+	 * upload alto files to derivative in MyCoRe
+	 * 
+	 * @param inLocation
+	 * @throws IOException
+	 * @throws SwapException
+	 */
+	private void uploadAltoFilesToDerivative(String inLocation) throws IOException, SwapException {
+		String folder = step.getProzess().getOcrAltoDirectory();
+		List<Path> list = StorageProvider.getInstance().listFiles(folder);
+		for (Path p : list) {
+			IngestFile f = new IngestFile();
+			f.setGoobiFilePath(p.toString());
+			f.setName(p.getFileName().toString());
+			f.setGoobiFileType("alto");
+			f.setGoobiSize(Files.size(p));
+			altos.add(f);
+			uploadFileToDerivative(inLocation, p, "application/xml", "ocr/alto/", p.getFileName().toString());
+		}
+	}
+
+	
+	/**
+	 * upload a file to derivative in MyCoRe
+	 * 
+	 * @param inLocation
+	 * @param p
+	 * @param mimetype
+	 * @throws IOException
+	 */
+	private void uploadFileToDerivative(String inLocation, Path p, String mimetype, String subfolder, String filename) throws IOException {
+		log.info("Upload file " + p.toString() + " to MyCoRe");
+		HttpResponse<InputStream> response = Unirest.put(inLocation + "/contents/" + subfolder + filename)
+		        .header("Content-Type", mimetype)
+		        .header("Accept", "application/xml")
+		        .basicAuth(mycoreLogin, mycorePassword)
+		        .body(p.toFile())
+		        .asObject(InputStream.class);
+
+		if (response.getStatus() < 200 || response.getStatus() >= 300) {
+		    throw new IOException("Response of MyCoRe for creation of derivative was not successful: " 
+		        + response.getStatus());
+		}
+	}
+	
+	
+	/**
+	 * Validate content after the mycore ingest
+	 * 
+	 * @param inLocation
+	 * @throws JsonMappingException
+	 * @throws JsonProcessingException
+	 */
+	private void validateIngestedContent(String inLocation, List<IngestFile> list) throws JsonMappingException, JsonProcessingException {
+		log.info("Validate the content of ingested content under " + inLocation + " in MyCoRe");
+		HttpResponse<String> response = Unirest.get(inLocation)
+				.header("Accept", "application/xml")
+				.basicAuth(mycoreLogin, mycorePassword)
+				.asString();
+		
+		XmlMapper xml = new XmlMapper();
+        xml.registerModule(new JavaTimeModule());
+        xml.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        xml.enable(SerializationFeature.INDENT_OUTPUT);
+        xml.configure(ToXmlGenerator.Feature.WRITE_XML_DECLARATION, true);
+        MycoreDirectory dn = xml.readValue(response.getBody(), MycoreDirectory.class);
+		for (MycoreFile	mf : dn.getFiles()) {
+			System.out.println(mf.getName());
+			for (IngestFile f : list) {
+				if (f.getName().equals(mf.getName())) {
+					f.setMycoreChecksum(mf.getMd5());
+					f.setMycoreMimeType(mf.getMimeType());
+					f.setMycoreSize(mf.getSize());
+					f.setMycoreUrl(inLocation + mf.getName());					
+				}
+			}
+		}
+
+	}
+	
+//	public static void main(String[] args) {
+//		HttpResponse<String> response = Unirest.get("https://zs-test.thulb.uni-jena.de/api/v2/objects/jportal_jpvolume_00003142/derivates/jportal_derivate_00002172/contents/")
+//		  .header("Authorization", "Basic Z29vYmk6dGVzdDEyMy4=")
+//		  .asString();
+//
+//		
+//		
+//		
+//		System.out.println(response.getBody().toString());
+//
+//		XmlMapper xml = new XmlMapper();
+//        xml.registerModule(new JavaTimeModule());
+//        xml.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+//        xml.enable(SerializationFeature.INDENT_OUTPUT);
+//        xml.configure(ToXmlGenerator.Feature.WRITE_XML_DECLARATION, true);
+//        try {
+//        	MycoreDirectory dn = xml.readValue(response.getBody(), MycoreDirectory.class);
+//			System.out.println(dn.getModified());
+//			for (MycoreFile	f : dn.getFiles()) {
+//				System.out.println(f.getName() + " - " + f.getMd5() + " - " + f.getMimeType());
+//			}
+//		} catch (JsonProcessingException e) {
+//			// TODO Auto-generated catch block
+//			e.printStackTrace();
+//		}
+//        
+//	}
 	
 	
 }
