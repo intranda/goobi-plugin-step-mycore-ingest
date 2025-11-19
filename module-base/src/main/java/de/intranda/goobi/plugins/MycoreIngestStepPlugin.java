@@ -1,6 +1,7 @@
 package de.intranda.goobi.plugins;
 
 
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringWriter;
@@ -22,11 +23,13 @@ import javax.xml.transform.TransformerFactory;
 import javax.xml.transform.stream.StreamResult;
 import javax.xml.transform.stream.StreamSource;
 
+import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.configuration.SubnodeConfiguration;
 import org.goobi.beans.GoobiProperty;
 import org.goobi.beans.JournalEntry;
 import org.goobi.beans.JournalEntry.EntryType;
 import org.goobi.beans.Step;
+import org.goobi.beans.GoobiProperty.PropertyOwnerType;
 import org.goobi.production.enums.LogType;
 import org.goobi.production.enums.PluginGuiType;
 import org.goobi.production.enums.PluginReturnValue;
@@ -35,8 +38,6 @@ import org.goobi.production.enums.StepReturnValue;
 import org.goobi.production.plugin.interfaces.IStepPluginVersion2;
 
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
@@ -52,13 +53,16 @@ import de.intranda.goobi.plugins.model.MycoreFile;
 import de.sub.goobi.config.ConfigPlugins;
 import de.sub.goobi.config.ConfigurationHelper;
 import de.sub.goobi.export.download.ExportMets;
+import de.sub.goobi.helper.BeanHelper;
 import de.sub.goobi.helper.Helper;
 import de.sub.goobi.helper.StorageProvider;
+import de.sub.goobi.helper.enums.PropertyType;
 import de.sub.goobi.helper.exceptions.DAOException;
 import de.sub.goobi.helper.exceptions.ExportFileException;
 import de.sub.goobi.helper.exceptions.SwapException;
 import de.sub.goobi.helper.exceptions.UghHelperException;
 import de.sub.goobi.persistence.managers.JournalManager;
+import de.sub.goobi.persistence.managers.PropertyManager;
 import kong.unirest.core.HttpResponse;
 import kong.unirest.core.Unirest;
 import lombok.Getter;
@@ -196,37 +200,24 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		}
 		
 		try {
-			// upload image derivatives
-			uploadImageFilesToDerivative(derivativeLocation);
-			
-			for (IngestFile i : derivatives) {
-				System.out.println(i.getName());
-			}
-			System.out.println("-------------------------");
-			
-			// upload ALTO files
-			uploadAltoFilesToDerivative(derivativeLocation);
-
-			for (IngestFile i : altos) {
-				System.out.println(i.getName());
-			}
-			System.out.println("-------------------------");
-			
 			// upload regular METS file
 			uploadFileToDerivative(derivativeLocation, metsfile, "application/xml", "", "goobi_mets.xml");
 			
 			// upload METS anchor file
 			String anchor = metsfile.toString().replace("_mets.xml", "_mets_anchor.xml");
 			uploadFileToDerivative(derivativeLocation, Paths.get(anchor), "application/xml", "", "goobi_mets_anchor.xml");
-			
+
+			// upload image derivatives and ALTO files
+			uploadImageFilesToDerivative(derivativeLocation);
+			uploadAltoFilesToDerivative(derivativeLocation);
+				
 			// validate content for images and mets file
-			validateIngestedContent(derivativeLocation + "/contents/", derivatives);
-			validateIngestedContent(derivativeLocation + "/contents/ocr/alto/", altos);
+			requestIngestedContentInformation(derivativeLocation, "/contents/", derivatives);
+			requestIngestedContentInformation(derivativeLocation, "/contents/ocr/alto/", altos);
 			
 			// add files into receipt
 			receipt.getFiles().addAll(derivatives);
 			receipt.getFiles().addAll(altos);
-			
 			log.info("Images were uploaded to MyCoRe derivative");
 		} catch (IOException | SwapException e) {
 			log.error("Error while uploading images to the derivative", e);
@@ -235,9 +226,77 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		}
 		
 		
+		// write summary information into properties
+		try {
+			writeProperty("Ingest Timestamp", LocalDateTime.now().toString());
+			writeProperty("Derivat URL",derivativeLocation);
+			writeSummaryProperties();
+			log.info("Properties with ingest results into MyCoRe were created");
+		} catch (IOException | SwapException | DAOException e) {
+			log.error("Error while writing summary information of MyCoRe ingest as properties", e);
+			writeErrorToJournal("Error while writing summary information of MyCoRe ingest as properties: " + e.getMessage());
+			return PluginReturnValue.ERROR;
+		}
+		
 		log.info("MycoreIngest step plugin executed");
 		writeReceipt(true, "Ingest finished successfull");
 		return PluginReturnValue.FINISH;
+	}
+
+	/**
+	 * write summary information into the properties of the process
+	 * @throws DAOException 
+	 * @throws SwapException 
+	 * @throws IOException 
+	 */
+	private void writeSummaryProperties() throws IOException, SwapException, DAOException {
+
+		// File sizes master in Goobi
+		long sizeMaster = 0;
+		String masterfolder = step.getProzess().getImagesOrigDirectory(false);
+		List<Path> list = StorageProvider.getInstance().listFiles(masterfolder);
+		for (Path p : list) {
+			sizeMaster+=Files.size(p);
+		}
+		writeProperty("Speicherplatz Master Goobi", String.valueOf(sizeMaster));
+		
+		// File sizes media in Goobi and MyCoRe
+		long sizeMediaGoobi = 0;
+		long sizeMediaMyCoRe = 0;
+		for (IngestFile i : derivatives) {
+			sizeMediaGoobi+=i.getGoobiSize();
+			sizeMediaMyCoRe+=i.getMycoreSize();
+		}
+		writeProperty("Speicherplatz Derivate Goobi", String.valueOf(sizeMediaGoobi));
+		writeProperty("Speicherplatz Derivate MyCoRe", String.valueOf(sizeMediaMyCoRe));
+
+		// File sizes alto in Goobi and MyCoRe
+		long sizeAltoGoobi = 0;
+		long sizeAltoMyCoRe = 0;
+		for (IngestFile i : altos) {
+			sizeAltoGoobi+=i.getGoobiSize();
+			sizeAltoMyCoRe+=i.getMycoreSize();
+		}
+		writeProperty("Speicherplatz ALTO Goobi", String.valueOf(sizeAltoGoobi));
+		writeProperty("Speicherplatz ALTO MyCoRe", String.valueOf(sizeAltoMyCoRe));
+		
+	}
+
+	/**
+	 * write one specific property
+	 * 
+	 * @param string
+	 * @param valueOf
+	 */
+	private void writeProperty(String name, String value) {
+		GoobiProperty prop = new GoobiProperty(PropertyOwnerType.PROCESS);
+		prop.setOwner(step.getProzess());
+		prop.setPropertyName(name);
+		prop.setType(PropertyType.getByName("String"));
+		prop.setPropertyValue(value);
+		prop.setContainer("MyCoRe");
+        step.getProzess().getEigenschaften().add(prop);
+        PropertyManager.saveProperty(prop);
 	}
 
 	/**
@@ -437,6 +496,8 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			f.setName(p.getFileName().toString());
 			f.setGoobiFileType("media");
 			f.setGoobiSize(Files.size(p));
+			f.setGoobiChecksum(md5Hex(p));
+			f.setUploadCounter(f.getUploadCounter()+1);
 			derivatives.add(f);
 			uploadFileToDerivative(inLocation, p, "image/tif", "", p.getFileName().toString());
 		}
@@ -458,11 +519,25 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			f.setName(p.getFileName().toString());
 			f.setGoobiFileType("alto");
 			f.setGoobiSize(Files.size(p));
+			f.setGoobiChecksum(md5Hex(p));
+			f.setUploadCounter(f.getUploadCounter()+1);
 			altos.add(f);
 			uploadFileToDerivative(inLocation, p, "application/xml", "ocr/alto/", p.getFileName().toString());
 		}
 	}
 
+	/**
+	 * Generate MD5 Checksum for file
+	 * 
+	 * @param p
+	 * @return
+	 * @throws IOException
+	 */
+	public static String md5Hex(Path p) throws IOException {
+		try (FileInputStream fis = new FileInputStream(p.toFile())) {
+			return DigestUtils.md5Hex(fis);
+		}
+	}
 	
 	/**
 	 * upload a file to derivative in MyCoRe
@@ -492,12 +567,12 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	 * Validate content after the mycore ingest
 	 * 
 	 * @param inLocation
-	 * @throws JsonMappingException
-	 * @throws JsonProcessingException
+	 * @throws SwapException 
+	 * @throws IOException 
 	 */
-	private void validateIngestedContent(String inLocation, List<IngestFile> list) throws JsonMappingException, JsonProcessingException {
-		log.info("Validate the content of ingested content under " + inLocation + " in MyCoRe");
-		HttpResponse<String> response = Unirest.get(inLocation)
+	private void requestIngestedContentInformation(String inLocation, String locationSuffix, List<IngestFile> list) throws IOException, SwapException {
+		log.info("Request content of ingested content under " + inLocation + locationSuffix + " in MyCoRe");
+		HttpResponse<String> response = Unirest.get(inLocation + locationSuffix)
 				.header("Accept", "application/xml")
 				.basicAuth(mycoreLogin, mycorePassword)
 				.asString();
@@ -509,18 +584,18 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
         xml.configure(ToXmlGenerator.Feature.WRITE_XML_DECLARATION, true);
         MycoreDirectory dn = xml.readValue(response.getBody(), MycoreDirectory.class);
 		for (MycoreFile	mf : dn.getFiles()) {
-			System.out.println(mf.getName());
 			for (IngestFile f : list) {
 				if (f.getName().equals(mf.getName())) {
 					f.setMycoreChecksum(mf.getMd5());
 					f.setMycoreMimeType(mf.getMimeType());
 					f.setMycoreSize(mf.getSize());
-					f.setMycoreUrl(inLocation + mf.getName());					
+					f.setMycoreUrl(inLocation + locationSuffix + mf.getName());
 				}
 			}
 		}
-
 	}
+	
+	
 	
 //	public static void main(String[] args) {
 //		HttpResponse<String> response = Unirest.get("https://zs-test.thulb.uni-jena.de/api/v2/objects/jportal_jpvolume_00003142/derivates/jportal_derivate_00002172/contents/")
