@@ -41,8 +41,9 @@ public class IngestFile {
 	private Long goobiSize;
 	
 	@JacksonXmlProperty(isAttribute = true)
+	private boolean valid = false;
+
+	@JacksonXmlProperty(isAttribute = true)
 	private int uploadCounter;
-	
-	
 	
 }

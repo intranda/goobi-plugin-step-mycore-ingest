@@ -92,6 +92,8 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	private IngestReceipt receipt;
 	private List<IngestFile> medias;
 	private List<IngestFile> altos;
+	private boolean ingestOk = false;
+	
 	@Override
 	public void initialize(Step step, String returnPath) {
 		this.returnPath = returnPath;
@@ -201,16 +203,19 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		
 		try {
 			// upload regular METS file
-			uploadFileToDerivative(derivativeLocation, metsfile, "application/xml", "", "goobi_mets.xml");
+//			uploadFileToDerivative(derivativeLocation, metsfile, "application/xml", "", "goobi_mets.xml");
 			
 			// upload METS anchor file
 			String anchor = metsfile.toString().replace("_mets.xml", "_mets_anchor.xml");
-			uploadFileToDerivative(derivativeLocation, Paths.get(anchor), "application/xml", "", "goobi_mets_anchor.xml");
+//			uploadFileToDerivative(derivativeLocation, Paths.get(anchor), "application/xml", "", "goobi_mets_anchor.xml");
 
 			// upload image derivatives and ALTO files
-			uploadImageFilesToDerivative(derivativeLocation);
-			uploadAltoFilesToDerivative(derivativeLocation);
-				
+//			uploadImageFilesToDerivative(derivativeLocation);
+//			uploadAltoFilesToDerivative(derivativeLocation);
+			
+			uploadFolder(step.getProzess().getImagesTifDirectory(false), "media", medias, derivativeLocation + "/contents/", "image/tif");
+			uploadFolder(step.getProzess().getOcrAltoDirectory(), "alto", altos, derivativeLocation + "/contents/ocr/alto/", "application/xml");
+			
 			// reqest content information for images and mets file
 			requestIngestedContentInformation(derivativeLocation, "/contents/", medias);
 			requestIngestedContentInformation(derivativeLocation, "/contents/ocr/alto/", altos);
@@ -230,6 +235,8 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		
 		// write summary information into properties
 		try {
+			writeProperty("Ingest Status",String.valueOf(ingestOk));
+			writeProperty("Ingest Details",receipt.getDetails());
 			writeProperty("Ingest Timestamp", LocalDateTime.now().toString());
 			writeProperty("Derivat URL",derivativeLocation);
 			writeSummaryProperties();
@@ -241,7 +248,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		}
 		
 		log.info("MycoreIngest step plugin executed");
-		writeReceipt(true, "Ingest finished successfull");
+		writeReceipt(ingestOk, "Ingest finished successfull");
 		return PluginReturnValue.FINISH;
 	}
 
@@ -353,6 +360,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		JournalEntry entry = new JournalEntry(step.getProzess().getId(), new Date(), "- automatic -",
                 LogType.ERROR, message, EntryType.PROCESS);
         JournalManager.saveJournalEntry(entry);
+        writeReceipt(false, message);
 	}
 	
 	/**
@@ -482,74 +490,44 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	}
 	
 
+	
 	/**
-	 * upload images to derivative in MyCoRe
+	 * upload all files of a folder to derivative in MyCoRe
 	 * 
-	 * @param inLocation
+	 * @param folder
+	 * @param type
+	 * @param list
+	 * @param location
+	 * @param mimetype
 	 * @throws IOException
 	 * @throws SwapException
 	 */
-	private void uploadImageFilesToDerivative(String inLocation) throws IOException, SwapException {
-		String folder = step.getProzess().getImagesTifDirectory(false);
-		List<Path> list = StorageProvider.getInstance().listFiles(folder);
-		for (Path p : list) {
+	private void uploadFolder(String folder, String type, List<IngestFile> list, String location, String mimetype) throws IOException, SwapException {
+		List<Path> filelist = StorageProvider.getInstance().listFiles(folder);
+		for (Path p : filelist) {
 			IngestFile f = new IngestFile();
 			f.setGoobiFilePath(p.toString());
 			f.setName(p.getFileName().toString());
-			f.setGoobiFileType("media");
+			f.setGoobiFileType(type);
 			f.setGoobiSize(Files.size(p));
 			f.setGoobiChecksum(md5Hex(p));
 			f.setUploadCounter(f.getUploadCounter()+1);
-			medias.add(f);
-			uploadFileToDerivative(inLocation, p, "image/tif", "", p.getFileName().toString());
+			list.add(f);
+			uploadFile(location, p, mimetype, p.getFileName().toString());
 		}
 	}
 	
-	/**
-	 * upload alto files to derivative in MyCoRe
-	 * 
-	 * @param inLocation
-	 * @throws IOException
-	 * @throws SwapException
-	 */
-	private void uploadAltoFilesToDerivative(String inLocation) throws IOException, SwapException {
-		String folder = step.getProzess().getOcrAltoDirectory();
-		List<Path> list = StorageProvider.getInstance().listFiles(folder);
-		for (Path p : list) {
-			IngestFile f = new IngestFile();
-			f.setGoobiFilePath(p.toString());
-			f.setName(p.getFileName().toString());
-			f.setGoobiFileType("alto");
-			f.setGoobiSize(Files.size(p));
-			f.setGoobiChecksum(md5Hex(p));
-			f.setUploadCounter(f.getUploadCounter()+1);
-			altos.add(f);
-			uploadFileToDerivative(inLocation, p, "application/xml", "ocr/alto/", p.getFileName().toString());
-		}
-	}
 
-	/**
-	 * Generate MD5 Checksum for file
-	 * 
-	 * @param p
-	 * @return
-	 * @throws IOException
-	 */
-	public static String md5Hex(Path p) throws IOException {
-		try (FileInputStream fis = new FileInputStream(p.toFile())) {
-			return DigestUtils.md5Hex(fis);
-		}
-	}
-	
 	/**
 	 * upload a file to derivative in MyCoRe
 	 * 
-	 * @param inLocation
+	 * @param location
 	 * @param p
 	 * @param mimetype
+	 * @param filename
 	 * @throws IOException
 	 */
-	private void uploadFileToDerivative(String inLocation, Path p, String mimetype, String subfolder, String filename) throws IOException {
+	private void uploadFile(String location, Path p, String mimetype, String filename) throws IOException {
 		log.info("Upload file " + p.toString() + " to MyCoRe");
 		int count = 0;
 		boolean success = false;
@@ -559,7 +537,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		while (!success && count < 3) {
 			count++;
 			try {
-				HttpResponse<String> response = Unirest.put(inLocation + "/contents/" + subfolder + filename)
+				HttpResponse<String> response = Unirest.put(location + filename)
 			        .header("Content-Type", mimetype)
 			        .basicAuth(mycoreLogin, mycorePassword)
 			        .body(Files.readAllBytes(p))
@@ -576,6 +554,88 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		        + status);
 		}
 	}
+	
+//	/**
+//	 * upload images to derivative in MyCoRe
+//	 * 
+//	 * @param inLocation
+//	 * @throws IOException
+//	 * @throws SwapException
+//	 */
+//	private void uploadImageFilesToDerivative(String inLocation) throws IOException, SwapException {
+//		String folder = step.getProzess().getImagesTifDirectory(false);
+//		List<Path> list = StorageProvider.getInstance().listFiles(folder);
+//		for (Path p : list) {
+//			IngestFile f = new IngestFile();
+//			f.setGoobiFilePath(p.toString());
+//			f.setName(p.getFileName().toString());
+//			f.setGoobiFileType("media");
+//			f.setGoobiSize(Files.size(p));
+//			f.setGoobiChecksum(md5Hex(p));
+//			f.setUploadCounter(f.getUploadCounter()+1);
+//			medias.add(f);
+//			uploadFileToDerivative(inLocation, p, "image/tif", "", p.getFileName().toString());
+//		}
+//	}
+//	
+//	/**
+//	 * upload alto files to derivative in MyCoRe
+//	 * 
+//	 * @param inLocation
+//	 * @throws IOException
+//	 * @throws SwapException
+//	 */
+//	private void uploadAltoFilesToDerivative(String inLocation) throws IOException, SwapException {
+//		String folder = step.getProzess().getOcrAltoDirectory();
+//		List<Path> list = StorageProvider.getInstance().listFiles(folder);
+//		for (Path p : list) {
+//			IngestFile f = new IngestFile();
+//			f.setGoobiFilePath(p.toString());
+//			f.setName(p.getFileName().toString());
+//			f.setGoobiFileType("alto");
+//			f.setGoobiSize(Files.size(p));
+//			f.setGoobiChecksum(md5Hex(p));
+//			f.setUploadCounter(f.getUploadCounter()+1);
+//			altos.add(f);
+//			uploadFileToDerivative(inLocation, p, "application/xml", "ocr/alto/", p.getFileName().toString());
+//		}
+//	}
+	
+//	/**
+//	 * upload a file to derivative in MyCoRe
+//	 * 
+//	 * @param inLocation
+//	 * @param p
+//	 * @param mimetype
+//	 * @throws IOException
+//	 */
+//	private void uploadFileToDerivative(String inLocation, Path p, String mimetype, String subfolder, String filename) throws IOException {
+//		log.info("Upload file " + p.toString() + " to MyCoRe");
+//		int count = 0;
+//		boolean success = false;
+//		int status = 0;
+//		
+//		// try up to 3 times to upload a file
+//		while (!success && count < 3) {
+//			count++;
+//			try {
+//				HttpResponse<String> response = Unirest.put(inLocation + "/contents/" + subfolder + filename)
+//			        .header("Content-Type", mimetype)
+//			        .basicAuth(mycoreLogin, mycorePassword)
+//			        .body(Files.readAllBytes(p))
+//			        .asString();
+//				success = true;
+//				status = response.getStatus();
+//			} catch (IOException e) {
+//				log.error("Error while uploading file (" + count + ")", e);
+//			}
+//		}
+//		
+//		if (status < 200 || status >= 300) {
+//		    throw new IOException("Response of MyCoRe for creation of derivative was not successful: " 
+//		        + status);
+//		}
+//	}
 	
 	
 	/**
@@ -605,8 +665,22 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 					f.setMycoreMimeType(mf.getMimeType());
 					f.setMycoreSize(mf.getSize());
 					f.setMycoreUrl(inLocation + locationSuffix + mf.getName());
+					f.setValid(f.getGoobiChecksum().equals(f.getMycoreChecksum()));
 				}
 			}
+		}
+	}
+
+	/**
+	 * Generate MD5 Checksum for file
+	 * 
+	 * @param p
+	 * @return
+	 * @throws IOException
+	 */
+	public static String md5Hex(Path p) throws IOException {
+		try (FileInputStream fis = new FileInputStream(p.toFile())) {
+			return DigestUtils.md5Hex(fis);
 		}
 	}
 	
@@ -625,7 +699,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		for (IngestFile f : listImages) {
 			if (!f.getMycoreChecksum().equals(f.getGoobiChecksum()) && f.getUploadCounter()<3) {
 				Path p = Paths.get(f.getGoobiFilePath());
-				uploadFileToDerivative(derivativeLocation, p, "image/tif", "", p.getFileName().toString());
+				//uploadFileToDerivative(derivativeLocation, p, "image/tif", "", p.getFileName().toString());
 			}
 		}
 		
