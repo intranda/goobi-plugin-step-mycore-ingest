@@ -90,7 +90,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	private String mycoreLogin;
 	private String mycorePassword;
 	private IngestReceipt receipt;
-	private List<IngestFile> derivatives;
+	private List<IngestFile> medias;
 	private List<IngestFile> altos;
 	@Override
 	public void initialize(Step step, String returnPath) {
@@ -149,7 +149,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 
 	@Override
 	public PluginReturnValue run() {
-		derivatives = new ArrayList<>();
+		medias = new ArrayList<>();
 		altos = new ArrayList<>();
 		receipt = new IngestReceipt();
 		receipt.setStatus("STARTED");
@@ -211,12 +211,14 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			uploadImageFilesToDerivative(derivativeLocation);
 			uploadAltoFilesToDerivative(derivativeLocation);
 				
-			// validate content for images and mets file
-			requestIngestedContentInformation(derivativeLocation, "/contents/", derivatives);
+			// reqest content information for images and mets file
+			requestIngestedContentInformation(derivativeLocation, "/contents/", medias);
 			requestIngestedContentInformation(derivativeLocation, "/contents/ocr/alto/", altos);
 			
+			//validateFiles(derivativeLocation, "/contents/", derivatives, "/contents/ocr/alto/", altos);
+			
 			// add files into receipt
-			receipt.getFiles().addAll(derivatives);
+			receipt.getFiles().addAll(medias);
 			receipt.getFiles().addAll(altos);
 			log.info("Images were uploaded to MyCoRe derivative");
 		} catch (IOException | SwapException e) {
@@ -263,7 +265,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		// File sizes media in Goobi and MyCoRe
 		long sizeMediaGoobi = 0;
 		long sizeMediaMyCoRe = 0;
-		for (IngestFile i : derivatives) {
+		for (IngestFile i : medias) {
 			sizeMediaGoobi+=i.getGoobiSize();
 			sizeMediaMyCoRe+=i.getMycoreSize();
 		}
@@ -498,7 +500,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			f.setGoobiSize(Files.size(p));
 			f.setGoobiChecksum(md5Hex(p));
 			f.setUploadCounter(f.getUploadCounter()+1);
-			derivatives.add(f);
+			medias.add(f);
 			uploadFileToDerivative(inLocation, p, "image/tif", "", p.getFileName().toString());
 		}
 	}
@@ -549,16 +551,29 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 	 */
 	private void uploadFileToDerivative(String inLocation, Path p, String mimetype, String subfolder, String filename) throws IOException {
 		log.info("Upload file " + p.toString() + " to MyCoRe");
-		HttpResponse<InputStream> response = Unirest.put(inLocation + "/contents/" + subfolder + filename)
-		        .header("Content-Type", mimetype)
-		        .header("Accept", "application/xml")
-		        .basicAuth(mycoreLogin, mycorePassword)
-		        .body(p.toFile())
-		        .asObject(InputStream.class);
-
-		if (response.getStatus() < 200 || response.getStatus() >= 300) {
+		int count = 0;
+		boolean success = false;
+		int status = 0;
+		
+		// try up to 3 times to upload a file
+		while (!success && count < 3) {
+			count++;
+			try {
+				HttpResponse<String> response = Unirest.put(inLocation + "/contents/" + subfolder + filename)
+			        .header("Content-Type", mimetype)
+			        .basicAuth(mycoreLogin, mycorePassword)
+			        .body(Files.readAllBytes(p))
+			        .asString();
+				success = true;
+				status = response.getStatus();
+			} catch (IOException e) {
+				log.error("Error while uploading file (" + count + ")", e);
+			}
+		}
+		
+		if (status < 200 || status >= 300) {
 		    throw new IOException("Response of MyCoRe for creation of derivative was not successful: " 
-		        + response.getStatus());
+		        + status);
 		}
 	}
 	
@@ -595,7 +610,28 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 		}
 	}
 	
-	
+	/**
+	 * validate uploaded content and reupload if needed
+	 * @param derivativeLocation
+	 * @param suffixImages
+	 * @param listImages
+	 * @param suffixAlto
+	 * @param listAlto
+	 * @throws IOException
+	 */
+	private void validateFiles(String derivativeLocation, String suffixImages, List<IngestFile> listImages, String suffixAlto, List<IngestFile> listAlto) throws IOException {
+		
+		// run through all image image file (different checksum and max 3 tries
+		for (IngestFile f : listImages) {
+			if (!f.getMycoreChecksum().equals(f.getGoobiChecksum()) && f.getUploadCounter()<3) {
+				Path p = Paths.get(f.getGoobiFilePath());
+				uploadFileToDerivative(derivativeLocation, p, "image/tif", "", p.getFileName().toString());
+			}
+		}
+		
+		
+	}
+
 	
 //	public static void main(String[] args) {
 //		HttpResponse<String> response = Unirest.get("https://zs-test.thulb.uni-jena.de/api/v2/objects/jportal_jpvolume_00003142/derivates/jportal_derivate_00002172/contents/")
