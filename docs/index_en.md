@@ -1,8 +1,8 @@
 ---
-title: ZZZ
-identifier: intranda_step_ZZZ
-description: Step Plugin for ZZZ
-published: false
+title: Ingest in MyCoRe
+identifier: intranda_step_mycore_ingest
+description: Step plugin for automated ingest of processes into MyCoRe
+published: true
 keywords:
     - Goobi workflow
     - Plugin
@@ -10,32 +10,33 @@ keywords:
 ---
 
 ## Introduction
-This documentation explains the plugin for ZZZ.
+This documentation explains the plugin for automated ingest into a MyCoRe repository.
 
 ## Installation
-To be able to use the plugin, the following files must be installed:
+To use the plugin, the following files must be installed:
 
 ```bash
-/opt/digiverso/goobi/plugins/step/plugin-step-ZZZ-base.jar
-/opt/digiverso/goobi/plugins/GUI/plugin-step-ZZZ-gui.jar
-/opt/digiverso/goobi/config/plugin_intranda_step_ZZZ.xml
+/opt/digiverso/goobi/plugins/step/plugin-step-mycore-ingest-base.jar
+/opt/digiverso/goobi/config/plugin_intranda_step_mycore_ingest.xml
 ```
 
-Once the plugin has been installed, it can be selected within the workflow for the respective work steps and thus executed automatically. A workflow could look like the following example:
+After installing the plugin, it can be selected within the workflow for the respective work steps and thus executed automatically. An example workflow could look like this:
 
-![Example of a workflow structure](screen1_en.png)
+![Example structure of a workflow](screen1_en.png)
 
-To use the plugin, it must be selected in a workflow step:
+To use the plugin, it must be selected in a work step:
 
-![Configuration of the workflow step for using the plugin](screen2_en.png)
+![Configuration of the work step for using the plugin](screen2_en.png)
 
 
 ## Overview and functionality
-ZZZ
+When this plugin is activated, it starts the ingest process in MyCoRe. To do this, the METS file is first transformed by exporting a METS file and then transforming it using an xsl file from a configurable URL. The XML file generated in this way is then used to create a volume in MyCoRe and a derivative is generated within it. The media files, full-text files and METS file are then uploaded together with the anchor file within the derivative. 
+
+Finally, the checksums and sizes of the files are determined and compared, and stored as an ingest receipt within the process journal.
 
 
 ## Configuration
-The plugin is configured in the file `plugin_intranda_step_ZZZ.xml` as shown here:
+The plugin is configured in the file `plugin_intranda_step_mycore_ingest.xml` as shown here:
 
 {{CONFIG_CONTENT}}
 
@@ -43,30 +44,8 @@ The plugin is configured in the file `plugin_intranda_step_ZZZ.xml` as shown her
 
 Parameter               | Explanation
 ------------------------|------------------------------------
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
-``                      | 
+`xslt-url`              | Specify the URL where an xsl file for the transformation can be accessed. A sample file is located in the `docs` directory of the plugin.
+`mycore-api`            | URL for the MyCoRe API
+`mycore-login`          | Enter your login name
+`mycore-password`       | Enter your login password
+`max-tries`             | Information about the maximum number of attempts to be used for ingest
