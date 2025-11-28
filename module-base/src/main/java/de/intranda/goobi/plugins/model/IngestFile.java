@@ -16,28 +16,34 @@ public class IngestFile {
 	@JacksonXmlProperty(isAttribute = true)
 	private String name;
 
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private String mycoreChecksum;
 
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private String mycoreMimeType;
 
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private Long mycoreSize;
 	
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private String mycoreUrl;
 	
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private String goobiFileType;
 	
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private String goobiFilePath;
 
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private String goobiChecksum;
 
-	@JacksonXmlProperty(isAttribute = true)
+	@JacksonXmlProperty(isAttribute = false)
 	private Long goobiSize;
+	
+	@JacksonXmlProperty(isAttribute = true)
+	private boolean valid = false;
+
+	@JacksonXmlProperty(isAttribute = true)
+	private int uploadCounter;
 	
 }

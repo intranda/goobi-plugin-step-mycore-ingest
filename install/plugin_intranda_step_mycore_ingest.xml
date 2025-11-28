@@ -25,6 +25,9 @@
         <mycore-login>login</mycore-login>
         <mycore-password>password</mycore-password>
         
+        <!-- number of tries to ingest the files in case of errors -->
+        <max-tries>3</max-tries>
+         
     </config>
 
 </config_plugin>
