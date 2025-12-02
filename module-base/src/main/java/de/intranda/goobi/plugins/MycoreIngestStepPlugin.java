@@ -324,6 +324,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			sizeAltoGoobi += i.getGoobiSize();
 			sizeAltoMyCoRe += i.getMycoreSize();
 		}
+		writeProperty("Anzahl der eingespielten ALTO-Dateien", String.valueOf(altos.size()));
 		writeProperty("Speicherplatz ALTO Goobi", String.valueOf(sizeAltoGoobi));
 		writeProperty("Speicherplatz ALTO MyCoRe", String.valueOf(sizeAltoMyCoRe));
 
