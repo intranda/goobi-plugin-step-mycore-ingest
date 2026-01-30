@@ -243,14 +243,14 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 				uploadFolder(step.getProzess().getImagesTifDirectory(false), "media", medias,
 						derivativeLocation + "/contents/", "image/tif");
 				uploadFolder(step.getProzess().getOcrAltoDirectory(), "alto", altos,
-						derivativeLocation + "/contents/ocr/alto/", "application/xml");
+						derivativeLocation + "/contents/alto/", "application/xml");
 
 				// request content information for images and mets file
 				requestIngestedContentInformation(derivativeLocation, "/contents/", metses);
 				requestIngestedContentInformation(derivativeLocation, "/contents/", medias);
-				requestIngestedContentInformation(derivativeLocation, "/contents/ocr/alto/", altos);
+				requestIngestedContentInformation(derivativeLocation, "/contents/alto/", altos);
 
-				validateFiles(derivativeLocation, "/contents/", "/contents/ocr/alto/");
+				validateFiles(derivativeLocation, "/contents/", "/contents/alto/");
 			}
 			
 			// add files into receipt
@@ -313,6 +313,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			sizeMediaGoobi += i.getGoobiSize();
 			sizeMediaMyCoRe += i.getMycoreSize();
 		}
+		writeProperty("Anzahl der eingespielten Bilder", String.valueOf(medias.size()));
 		writeProperty("Speicherplatz Derivate Goobi", String.valueOf(sizeMediaGoobi));
 		writeProperty("Speicherplatz Derivate MyCoRe", String.valueOf(sizeMediaMyCoRe));
 
@@ -323,6 +324,7 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
 			sizeAltoGoobi += i.getGoobiSize();
 			sizeAltoMyCoRe += i.getMycoreSize();
 		}
+		writeProperty("Anzahl der eingespielten ALTO-Dateien", String.valueOf(altos.size()));
 		writeProperty("Speicherplatz ALTO Goobi", String.valueOf(sizeAltoGoobi));
 		writeProperty("Speicherplatz ALTO MyCoRe", String.valueOf(sizeAltoMyCoRe));
 
