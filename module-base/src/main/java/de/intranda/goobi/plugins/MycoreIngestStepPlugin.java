@@ -40,6 +40,7 @@ import org.goobi.production.enums.*;
 import org.goobi.production.plugin.interfaces.IStepPluginVersion2;
 import ugh.exceptions.*;
 
+import javax.xml.XMLConstants;
 import javax.xml.transform.Source;
 import javax.xml.transform.Transformer;
 import javax.xml.transform.TransformerException;
@@ -449,6 +450,8 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
             Source xsltSource = new StreamSource(xsltUrl.openStream());
 
             TransformerFactory factory = TransformerFactory.newInstance();
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "");
             Transformer transformer = factory.newTransformer(xsltSource);
             transformer.setParameter("parentID", mycoreId);
 
