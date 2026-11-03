@@ -27,6 +27,13 @@
         
         <!-- number of tries to ingest the files in case of errors -->
         <max-tries>3</max-tries>
+
+        <!-- optional for debugging: save the exported METS file before and the result after the XSLT transformation.
+             Full file paths, Goobi variables can be used, e.g. {processpath}, {processtitle}, {datetime.yyyyMMdd-HHmmss} -->
+        <!--
+        <debug-mets-before-xslt>{processpath}/debug/{datetime.yyyyMMdd-HHmmss}_mets.xml</debug-mets-before-xslt>
+        <debug-mets-after-xslt>{processpath}/debug/{datetime.yyyyMMdd-HHmmss}_mycore.xml</debug-mets-after-xslt>
+        -->
          
     </config>
 

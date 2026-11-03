@@ -49,3 +49,15 @@ Parameter               | Erläuterung
 `mycore-login`          | Angabe des Login Namens
 `mycore-password`       | Angabe des Login Passworts
 `max-tries`             | Angabe über die maximale Anzahl an Versuchen, die für den Ingest genutzt werden soll
+`debug-mets-before-xslt` | Optional. Vollständiger Dateipfad, unter dem die exportierte METS-Datei vor der XSLT-Transformation gespeichert wird.
+`debug-mets-after-xslt` | Optional. Vollständiger Dateipfad, unter dem das Ergebnis der XSLT-Transformation gespeichert wird, genau so, wie es an MyCoRe gesendet wird.
+
+### Debug-Dateien
+Zur Fehlersuche kann das Plugin die exportierte METS-Datei und das Ergebnis der XSLT-Transformation speichern. So lässt sich feststellen, ob ein Problem aus dem METS-Export oder aus der Transformation stammt. Beide Parameter können unabhängig voneinander genutzt werden; fehlt ein Parameter oder ist er leer, wird die Datei nicht gespeichert.
+
+- Der Wert ist ein vollständiger, absoluter Pfad inklusive Dateiname, kein Ordner. Fehlende Ordner werden angelegt.
+- Goobi-Variablen können verwendet werden, sodass sowohl ein globaler Ordner als auch ein Ordner pro Vorgang möglich ist, z. B. `{processpath}/debug/mets.xml` oder `/opt/digiverso/debug/{processtitle}_mets.xml`. In einem gemeinsamen Ordner sollte `{processtitle}` oder `{processid}` im Dateinamen stehen, damit sich Vorgänge nicht gegenseitig überschreiben.
+- Ohne Datumsvariable überschreibt jeder Lauf die vorherige Datei. Mit `{datetime.yyyyMMdd-HHmmss}` entsteht bei jedem Lauf eine neue Datei; beide Dateien eines Laufs erhalten denselben Zeitstempel. Das Datumsmuster darf weder `)` noch `}` enthalten.
+- Wenn konfiguriert, werden die Dateien bei jedem Lauf gespeichert. Die METS-Datei wird direkt nach dem Export gespeichert, das Transformationsergebnis bevor es an MyCoRe gesendet wird, sodass beide auch dann vorliegen, wenn ein späterer Schritt fehlschlägt.
+- Alte Debug-Dateien werden nicht automatisch gelöscht.
+- Kann eine Debug-Datei nicht gespeichert werden, wird nur eine Warnung protokolliert; der Ingest läuft weiter.
