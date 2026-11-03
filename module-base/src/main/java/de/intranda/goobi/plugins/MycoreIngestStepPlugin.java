@@ -16,6 +16,7 @@ import de.sub.goobi.config.ConfigPlugins;
 import de.sub.goobi.config.ConfigurationHelper;
 import de.sub.goobi.export.download.ExportMets;
 import de.sub.goobi.helper.StorageProvider;
+import de.sub.goobi.helper.VariableReplacer;
 import de.sub.goobi.helper.enums.PropertyType;
 import de.sub.goobi.helper.exceptions.DAOException;
 import de.sub.goobi.helper.exceptions.ExportFileException;
@@ -31,6 +32,7 @@ import lombok.extern.log4j.Log4j2;
 import net.xeoh.plugins.base.annotations.PluginImplementation;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.commons.configuration.SubnodeConfiguration;
+import org.apache.commons.lang3.StringUtils;
 import org.goobi.beans.GoobiProperty;
 import org.goobi.beans.GoobiProperty.PropertyOwnerType;
 import org.goobi.beans.JournalEntry;
@@ -38,6 +40,9 @@ import org.goobi.beans.JournalEntry.EntryType;
 import org.goobi.beans.Step;
 import org.goobi.production.enums.*;
 import org.goobi.production.plugin.interfaces.IStepPluginVersion2;
+import ugh.dl.DigitalDocument;
+import ugh.dl.Fileformat;
+import ugh.dl.Prefs;
 import ugh.exceptions.*;
 
 import javax.xml.XMLConstants;
@@ -51,7 +56,9 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
@@ -75,6 +82,10 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
     private String mycoreApi;
     private String mycoreLogin;
     private String mycorePassword;
+    @Getter
+    private String debugMetsBeforeXslt = "";
+    @Getter
+    private String debugMetsAfterXslt = "";
     private IngestReceipt receipt;
     private List<IngestFile> metses;
     private List<IngestFile> medias;
@@ -96,6 +107,8 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
         mycoreLogin = myconfig.getString("mycore-login", "login");
         mycorePassword = myconfig.getString("mycore-password", "password");
         ingestMaxTries = myconfig.getInt("max-tries", 3);
+        debugMetsBeforeXslt = myconfig.getString("debug-mets-before-xslt", "").trim();
+        debugMetsAfterXslt = myconfig.getString("debug-mets-after-xslt", "").trim();
         log.info("MycoreIngest step plugin initialized");
     }
 
@@ -149,6 +162,19 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
         receipt = new IngestReceipt();
         receipt.setStatus("STARTED");
 
+        // prepare optional debug copies of the METS file
+        Path debugMetsBefore = null;
+        Path debugMetsAfter = null;
+        if (StringUtils.isNotBlank(debugMetsBeforeXslt) || StringUtils.isNotBlank(debugMetsAfterXslt)) {
+            try {
+                Path[] debugPaths = prepareDebugPaths();
+                debugMetsBefore = debugPaths[0];
+                debugMetsAfter = debugPaths[1];
+            } catch (Exception e) {
+                log.warn("Could not prepare the debug files for the METS export", e);
+            }
+        }
+
         // export the mets file
         Path metsfile;
         try {
@@ -160,6 +186,15 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
             return PluginReturnValue.ERROR;
         }
 
+        // save debug copy of the exported mets file
+        if (debugMetsBefore != null) {
+            try {
+                saveDebugFile(debugMetsBefore, Files.readAllBytes(metsfile));
+            } catch (IOException e) {
+                log.warn("Could not read the METS file for the debug copy " + debugMetsBefore, e);
+            }
+        }
+
         // do an xslt convert of the mets file
         String xmlResult = null;
         try {
@@ -169,6 +204,9 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
             writeErrorToJournal("Error while doing the XSLT processing for the METS file: " + e.getMessage());
             return PluginReturnValue.ERROR;
         }
+
+        // save debug copy of the xslt result
+        saveDebugFile(debugMetsAfter, xmlResult.getBytes(StandardCharsets.UTF_8));
 
         // create volume in mycore
         String volumeLocation = null;
@@ -276,6 +314,78 @@ public class MycoreIngestStepPlugin implements IStepPluginVersion2 {
             return PluginReturnValue.FINISH;
         } else {
             return PluginReturnValue.ERROR;
+        }
+    }
+
+    /**
+     * build the variable replacer for the process and resolve the configured debug paths
+     *
+     * @return array with the before and after path, entries may be null
+     */
+    private Path[] prepareDebugPaths() {
+        org.goobi.beans.Process process = step.getProzess();
+        DigitalDocument dd = null;
+        try {
+            Fileformat ff = process.readMetadataFile();
+            if (ff != null) {
+                dd = ff.getDigitalDocument();
+            }
+        } catch (UGHException | IOException | SwapException e) {
+            log.warn("Could not read the metadata file for the debug paths", e);
+        }
+        Prefs prefs = process.getRegelsatz().getPreferences();
+        VariableReplacer replacer = new VariableReplacer(dd, prefs, process, step);
+        return resolveDebugPaths(debugMetsBeforeXslt, debugMetsAfterXslt, replacer);
+    }
+
+    /**
+     * resolve the configured debug paths, variables are replaced in one pass to get identical values
+     *
+     * @param before configured path for the METS file before the xslt
+     * @param after configured path for the xslt result
+     * @param replacer variable replacer
+     * @return array with the before and after path, blank or invalid entries are null
+     */
+    Path[] resolveDebugPaths(String before, String after, VariableReplacer replacer) {
+        Path[] result = new Path[] { null, null };
+        if (StringUtils.isBlank(before) && StringUtils.isBlank(after)) {
+            return result;
+        }
+        String b = before == null ? "" : before;
+        String a = after == null ? "" : after;
+        String[] parts = replacer.replace(b + "\n" + a).split("\n", 2);
+        String[] originals = { b, a };
+        for (int i = 0; i < 2; i++) {
+            String part = i < parts.length ? parts[i] : "";
+            if (StringUtils.isBlank(originals[i]) || StringUtils.isBlank(part)) {
+                continue;
+            }
+            try {
+                result[i] = Paths.get(part.trim());
+            } catch (InvalidPathException e) {
+                log.warn("Invalid debug path configured: " + originals[i], e);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * save a debug copy of a file, errors are only logged
+     *
+     * @param target target file, nothing happens if null
+     * @param content file content
+     */
+    void saveDebugFile(Path target, byte[] content) {
+        if (target == null) {
+            return;
+        }
+        try {
+            if (target.getParent() != null) {
+                StorageProvider.getInstance().createDirectories(target.getParent());
+            }
+            Files.write(target, content);
+        } catch (IOException e) {
+            log.warn("Could not save debug file " + target, e);
         }
     }
 

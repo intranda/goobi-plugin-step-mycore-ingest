@@ -1,10 +1,14 @@
 package de.intranda.goobi.plugins;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -86,6 +90,109 @@ public class MycoreIngestPluginTest {
     public void testVersion() throws IOException {
         String s = "xyz";
         assertNotNull(s);
+    }
+
+    @Test
+    public void testInitReadsDebugPaths() {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        plugin.initialize(step, "something");
+        assertEquals("/opt/digiverso/debug/{processtitle}_before.xml", plugin.getDebugMetsBeforeXslt());
+        assertEquals("/opt/digiverso/debug/{processtitle}_after.xml", plugin.getDebugMetsAfterXslt());
+    }
+
+    @Test
+    public void testResolveDebugPathsWithoutConfigDoesNotUseReplacer() {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        VariableReplacer replacer = EasyMock.createStrictMock(VariableReplacer.class);
+        EasyMock.replay(replacer);
+
+        Path[] paths = plugin.resolveDebugPaths("", "", replacer);
+
+        assertNull(paths[0]);
+        assertNull(paths[1]);
+        EasyMock.verify(replacer);
+    }
+
+    @Test
+    public void testResolveDebugPathsReplacesBothInOneCall() {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        VariableReplacer replacer = EasyMock.createStrictMock(VariableReplacer.class);
+        EasyMock.expect(replacer.replace("/debug/{datetime.HHmmss}_before.xml\n/debug/{datetime.HHmmss}_after.xml"))
+                .andReturn("/debug/120000_before.xml\n/debug/120000_after.xml")
+                .once();
+        EasyMock.replay(replacer);
+
+        Path[] paths = plugin.resolveDebugPaths("/debug/{datetime.HHmmss}_before.xml", "/debug/{datetime.HHmmss}_after.xml",
+                replacer);
+
+        assertEquals(Paths.get("/debug/120000_before.xml"), paths[0]);
+        assertEquals(Paths.get("/debug/120000_after.xml"), paths[1]);
+        EasyMock.verify(replacer);
+    }
+
+    @Test
+    public void testResolveDebugPathsWithOnlyAfterConfigured() {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        VariableReplacer replacer = EasyMock.createMock(VariableReplacer.class);
+        EasyMock.expect(replacer.replace("\n/debug/after.xml")).andReturn("\n/debug/after.xml").once();
+        EasyMock.replay(replacer);
+
+        Path[] paths = plugin.resolveDebugPaths("", "/debug/after.xml", replacer);
+
+        assertNull(paths[0]);
+        assertEquals(Paths.get("/debug/after.xml"), paths[1]);
+    }
+
+    @Test
+    public void testResolveDebugPathsWithInvalidPath() {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        VariableReplacer replacer = EasyMock.createMock(VariableReplacer.class);
+        EasyMock.expect(replacer.replace(EasyMock.anyString())).andReturn("/debug/in\u0000valid.xml\n/debug/after.xml").once();
+        EasyMock.replay(replacer);
+
+        Path[] paths = plugin.resolveDebugPaths("/debug/before.xml", "/debug/after.xml", replacer);
+
+        assertNull(paths[0]);
+        assertEquals(Paths.get("/debug/after.xml"), paths[1]);
+    }
+
+    @Test
+    public void testSaveDebugFileCreatesFolders() throws IOException {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        Path target = folder.getRoot().toPath().resolve("debug").resolve("process").resolve("mets.xml");
+
+        plugin.saveDebugFile(target, "<mets/>".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals("<mets/>", Files.readString(target));
+    }
+
+    @Test
+    public void testSaveDebugFileOverwritesExistingFile() throws IOException {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        Path target = folder.newFile("mets.xml").toPath();
+        Files.writeString(target, "<old/>");
+
+        plugin.saveDebugFile(target, "<new/>".getBytes(StandardCharsets.UTF_8));
+
+        assertEquals("<new/>", Files.readString(target));
+    }
+
+    @Test
+    public void testSaveDebugFileWithoutTarget() {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        plugin.saveDebugFile(null, "<mets/>".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    public void testSaveDebugFileFailureDoesNotThrow() throws IOException {
+        MycoreIngestStepPlugin plugin = new MycoreIngestStepPlugin();
+        Path regularFile = folder.newFile("not-a-folder").toPath();
+        Path target = regularFile.resolve("mets.xml");
+
+        plugin.saveDebugFile(target, "<mets/>".getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(Files.isRegularFile(regularFile));
+        assertFalse(Files.exists(target));
     }
 
     @Before

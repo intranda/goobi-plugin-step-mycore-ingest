@@ -16,6 +16,11 @@
         <value>test</value>
         <!-- display button to finish the task directly from within the entered plugin -->
         <allowTaskFinishButtons>true</allowTaskFinishButtons>
+        <!-- debug copies of the METS file before and after the XSLT transformation -->
+        <debug-mets-before-xslt>
+            /opt/digiverso/debug/{processtitle}_before.xml
+        </debug-mets-before-xslt>
+        <debug-mets-after-xslt>/opt/digiverso/debug/{processtitle}_after.xml</debug-mets-after-xslt>
     </config>
 
 </config_plugin>
